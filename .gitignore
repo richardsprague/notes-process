@@ -1,0 +1,15 @@
+# Ignore exported markdown and Quarto outputs
+input/
+output/
+
+# Python and Docker artifacts
+__pycache__/
+*.pyc
+.python-version
+*.log
+.dockerignore
+
+# VS Code and macOS artifacts
+.vscode/
+.DS_Store
+*.code-workspace
