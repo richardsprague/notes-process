@@ -1,9 +1,13 @@
 # Notes Process Makefile
 # Usage: make <target>
 
-.PHONY: process render build
+.PHONY: clean process render build
 
-process:
+clean:
+	@echo "Cleaning output directory..."
+	@rm -rf output
+
+process: clean
 	@echo "Processing markdown files..."
 	@docker run --rm -v $(PWD):/app -it notes-process python scripts/process_vault.py
 
@@ -14,4 +18,3 @@ render:
 build:
 	@echo "Building Docker image..."
 	@docker build -t notes-process .
-	
