@@ -13,3 +13,6 @@ __pycache__/
 .vscode/
 .DS_Store
 *.code-workspace
+
+/.quarto/
+/docs

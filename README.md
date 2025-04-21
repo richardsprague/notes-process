@@ -4,9 +4,10 @@ This project processes markdown files exported from an Obsidian vault (e.g., `~/
 
 ## Purpose
 
-- **Input**: Markdown files exported from Obsidian, organized in subfolders (e.g., `input/Notes 2025Q1/`, `input/_resources/` for images).
-- **Processing**: Converts `.md` files to `.qmd`, fixes image paths, sorts by date (`created` or `date` frontmatter), and creates a Quarto project.
-- **Output**: A book with HTML (`book.html`), PDF (`book.pdf`), and EPUB (`book.epub`) formats, stored in `output/`.
+- **Input**: Markdown files exported from Obsidian, organized in subfolders (e.g., `input/Notes 2025Q1/`), with images in `input/_resources/`.
+- **Processing**: Converts `.md` files to `.qmd` in `output/`, copies referenced images to `output/_resources/`, fixes image paths to `_resources/`, and concatenates daily notes (`Notes YYMMDD*` with `tag: notes`) into `output/Notes-All.qmd`.
+- **Rendering**: Uses a manually maintained `_quarto.yml` in the project root to render `output/*.qmd` to `docs/` as HTML, PDF, and EPUB.
+- **Output**: A book with HTML (`docs/index.html`), PDF (`docs/book.pdf`), and EPUB (`docs/book.epub`) formats.
 
 ## Prerequisites
 
@@ -21,27 +22,31 @@ This project processes markdown files exported from an Obsidian vault (e.g., `~/
 
 ```
 notes-process/
+├── _quarto.yml         # Quarto configuration for rendering output/ to docs/
 ├── Dockerfile          # Defines the Docker image with Python, Quarto, TinyTeX
 ├── requirements.txt    # Python dependencies (pyyaml, markdown, python-dateutil)
 ├── scripts/
-│   └── process_vault.py  # Script to process markdown and generate Quarto project
+│   └── process-vault.py  # Script to convert .md to .qmd and copy images
 ├── input/              # Exported Obsidian markdown files (ignored by Git)
 │   ├── _resources/     # Images referenced in markdown
 │   ├── Notes 2025Q1/   # Example subfolder with .md files
 │   └── ...
-├── output/             # Quarto project and rendered outputs (ignored by Git)
-│   ├── _quarto.yml     # Quarto configuration
+├── output/             # Processed .qmd files and images (ignored by Git)
+│   ├── _resources/     # Copied images referenced in .qmd files
 │   ├── index.qmd       # Book index
-│   ├── _resources/     # Copied images
-│   ├── chapters/       # Processed .qmd files
-│   ├── book.html       # HTML output
+│   ├── Notes-All.qmd   # Concatenated daily notes
+│   ├── *.qmd           # Other processed chapters
+├── docs/               # Rendered outputs (ignored by Git)
+│   ├── _resources/     # Images copied by Quarto
+│   ├── index.html      # HTML output
 │   ├── book.pdf        # PDF output
 │   ├── book.epub       # EPUB output
 ├── .vscode/
 │   ├── tasks.json      # VS Code tasks for processing and rendering
 │   ├── launch.json     # VS Code debug configurations for Run and Debug menu
 ├── run.sh              # Shell script for terminal shortcuts
-├── .gitignore          # Ignores input/, output/, .vscode/, *.code-workspace
+├── Makefile            # Makefile for terminal-based build tasks
+├── .gitignore          # Ignores input/, output/, docs/, .vscode/, *.code-workspace
 └── README.md           # This file
 ```
 
@@ -49,7 +54,7 @@ notes-process/
 
 1. **Clone the Repository**:
    ```bash
-   git clone <your-repo-url>
+   git clone https://github.com/richardsprague/notes-process.git
    cd notes-process
    ```
 
@@ -62,151 +67,181 @@ notes-process/
    - Ensure images are in `input/_resources/` and markdown files are in subfolders (e.g., `input/Notes 2025Q1/`).
    - Example `.md` file:
      ```markdown
-     # File: input/Notes 2025Q1/Notes 2025-01-07.md
+     # File: input/Notes 2025Q1/Notes 250413 Sunday.md
      ---
-     created: 2025-01-07 06:04
+     created: 2025-04-13 06:04
      tags:
        - notes
      ---
-     # 2025-01-07 Tuesday
-     - Planning meeting
-     - ![Image](_resources/aac4c659f4914cfea3aca715d85e69c9.jpg)
+     Our Walmart delivery arrived today...
+     ![](_resources/935414628fc97270bb7b35424032f850.jpg)
      ```
 
 4. **Build the Docker Image**:
    ```bash
    docker build -t notes-process .
    ```
-   - This installs Python, Quarto (1.5.57), TinyTeX, and LaTeX packages (`koma-script`, `tcolorbox`, etc.) for rendering.
+   - Installs Python, Quarto (1.5.57), TinyTeX, and LaTeX packages (`koma-script`, `tcolorbox`, etc.) for rendering.
 
 ## Usage
 
-### Option 1: Run via VS Code Run and Debug Menu
-1. **Open Project**:
-   - Open `~/dev/notes/notes-process` in VS Code.
+### Step 1: Process Markdown Files
+Run `process-vault.py` to convert `input/*.md` to `output/*.qmd` and copy referenced images to `output/_resources/`.
 
-2. **Run Configurations**:
-   - Open the **Run and Debug** panel (`Cmd + Shift + D` or click the play/debug icon in the sidebar).
-   - Select a configuration from the dropdown:
-     - `Process Notes`: Runs `python scripts/process_vault.py` to process markdown files.
-     - `Render Quarto`: Runs `quarto render /app/output` to generate HTML, PDF, and EPUB.
-     - `Build Docker Image`: Runs `docker build -t notes-process .` to rebuild the image.
-   - Click the green play button or press `F5` to run the selected configuration.
-   - Output appears in the integrated terminal.
+#### Option 1: Via VS Code Run and Debug Menu
+1. Open `~/dev/notes/notes-process` in VS Code.
+2. Open the **Run and Debug** panel (`Cmd + Shift + D` or click the play/debug icon).
+3. Select `Process Notes` from the dropdown.
+4. Click the green play button or press `F5`.
+5. Output appears in the integrated terminal.
 
-3. **Optional Shortcuts**:
-   - Bind shortcuts in `Code > Preferences > Keyboard Shortcuts` (`Cmd + K, Cmd + S`).
-   - Edit `keybindings.json`:
-     ```json
-     [
-       {
-         "key": "cmd+shift+p",
-         "command": "workbench.action.debug.run",
-         "when": "debugConfigurationType == 'node' && debugConfigurationName == 'Process Notes'"
-       },
-       {
-         "key": "cmd+shift+r",
-         "command": "workbench.action.debug.run",
-         "when": "debugConfigurationType == 'node' && debugConfigurationName == 'Render Quarto'"
-       }
-     ]
-     ```
-   - `Cmd + Shift + P` runs `Process Notes`, `Cmd + Shift + R` runs `Render Quarto`.
+#### Option 2: Via VS Code Tasks
+1. Open `~/dev/notes/notes-process` in VS Code.
+2. Open the Command Palette (`Cmd + Shift + P`).
+3. Select `Tasks: Run Task` and choose `Process Notes`.
+4. Or press `Cmd + Shift + B` (default build task).
 
-### Option 2: Run via VS Code Tasks
-1. **Open Project**:
-   - Open `~/dev/notes/notes-process` in VS Code.
+#### Option 3: Via Makefile
+```bash
+make process
+```
+- Runs `clean` (removes `output/` including hidden files like `.quarto`) and `process-vault.py`.
 
-2. **Run Tasks**:
-   - Open the Command Palette (`Cmd + Shift + P`).
-   - Select `Tasks: Run Task` and choose:
-     - `Process Notes`: Processes markdown files.
-     - `Render Quarto`: Renders outputs.
-     - `Build Docker Image`: Rebuilds the image.
-   - Or press `Cmd + Shift + B` to run the default task (`Process Notes`).
+#### Option 4: Via Terminal
+```bash
+docker run --rm -v ~/dev/notes/notes-process:/app -it notes-process python scripts/process-vault.py
+```
 
-### Option 3: Run via Terminal
-1. **Using `run.sh`**:
-   - Run the shell script for quick terminal access:
-     ```bash
-     ./run.sh process  # Process markdown files
-     ./run.sh render   # Render Quarto project
-     ./run.sh build    # Build Docker image
-     ```
+**Output**:
+- `output/` contains `.qmd` files (e.g., `index.qmd`, `Notes-All.qmd`, `Martha_2025.qmd`) and `_resources/` with referenced images.
+- Example `output/Martha_2025.qmd`:
+  ```markdown
+  ---
+  created: 2025-01-13 05:40
+  tags:
+  - martha
+  - notes
+  ---
+  235 W 63RD ST PH PA
+  New York, NY 10023
+  From January 8 or so, she’s been terribly ill...
+  ![](_resources/349fe6a1a53ce966bcde781704c088d2.jpeg)
+  ```
+- Example `output/Notes-All.qmd`:
+  ```markdown
+  # All Notes
+  <div class="raw"><p class="date-box">Wednesday, April 02</p></div>
+  Our guide Tiffany met us at our hotel...
+  ![](_resources/935414628fc97270bb7b35424032f850.jpg)
+  **South Kaibab Trail**
+  ...
+  ```
 
-2. **Using Direct Commands**:
-   - Process markdown:
-     ```bash
-     docker run --rm -v ~/dev/notes/notes-process:/app -it notes-process python scripts/process_vault.py
-     ```
-   - Render outputs:
-     ```bash
-     docker run --rm -v ~/dev/notes/notes-process:/app -it notes-process quarto render /app/output
-     ```
+### Step 2: Render Quarto Project
+Use `_quarto.yml` in `notes-process/` to render `output/*.qmd` to `docs/`.
+
+#### Option 1: Via VS Code Run and Debug Menu
+1. Open the **Run and Debug** panel (`Cmd + Shift + D`).
+2. Select `Render Quarto` from the dropdown.
+3. Click the green play button or press `F5`.
+
+#### Option 2: Via VS Code Tasks
+1. Open the Command Palette (`Cmd + Shift + P`).
+2. Select `Tasks: Run Task` and choose `Render Quarto`.
+
+#### Option 3: Via Makefile
+```bash
+make render
+```
+
+#### Option 4: Via Terminal
+```bash
+docker run --rm -v $(pwd):/app -it notes-process quarto render /app/output
+```
+
+**Output**:
+- `docs/` contains:
+  ```
+  docs/
+  ├── _resources/
+  │   ├── 935414628fc97270bb7b35424032f850.jpg
+  │   ├── 349fe6a1a53ce966bcde781704c088d2.jpeg
+  │   ├── ...
+  ├── index.html
+  ├── Notes-All.html
+  ├── Martha_2025.html
+  ├── Leah_2025.html
+  ├── Martha_Concert_2025-04-13.html
+  ├── book.pdf
+  ├── book.epub
+  ```
 
 ### View Outputs
-- Open in a browser (`book.html`), PDF viewer (`book.pdf`), or e-reader (`book.epub`).
-- Check `output/chapters/*.qmd` for processed content.
+- Open `docs/index.html` in a browser, `docs/book.pdf` in a PDF viewer, or `docs/book.epub` in an e-reader.
+- Check `output/*.qmd` for processed content.
 
 ## Troubleshooting
 
-- **Image Warnings**:
-  - If `PandocResourceNotFound` warnings appear (e.g., `chapters/../../_resources/`), ensure `input/_resources/` contains the images and check `.qmd` files for correct paths (`../_resources/`).
+- **Image Rendering Issues**:
+  - Ensure images exist in `input/_resources/` (e.g., `935414628fc97270bb7b35424032f850.jpg`).
+  - Verify `output/_resources/` and `docs/_resources/` contain referenced images after processing and rendering.
+  - Check `.qmd` files for correct paths (`![](_resources/image.jpg)`).
   - Share a sample `.md` file with image links to debug.
+
+- **Link Warnings**:
+  - Warnings like `Unable to resolve link target: Collateral (2018).md` indicate missing or mismatched `.md` files in `input/`.
+  - Run:
+    ```bash
+    find ~/dev/notes/notes-process/input -name "*.md" | grep -i "Collateral\|Martha\|Leah"
+    ```
+  - Share `.md` snippets from `Notes 250417 Thursday.md` or `Notes 250420 Sunday.md` with links (e.g., `[Martha](Martha 2025.md)`).
 
 - **PDF Rendering Fails**:
   - Verify `xelatex`:
     ```bash
     docker run --rm -v ~/dev/notes/notes-process:/app -it notes-process xelatex --version
     ```
-  - If it fails, check `_quarto.yml`’s `pdf-engine` (should be `xelatex`) or try `pdflatex`.
+  - Ensure `_quarto.yml` uses `pdf: documentclass: scrbook`.
   - Share error output for debugging.
 
 - **Slow Rendering**:
-  - If new LaTeX packages are downloaded at runtime, add them to the `tlmgr install` list in the Dockerfile (e.g., `tlmgr install <package>`).
-  - Rebuild the image:
+  - If new LaTeX packages are downloaded, add them to `Dockerfile`’s `tlmgr install` list.
+  - Rebuild:
     ```bash
     docker build -t notes-process .
     ```
 
-- **LuaLaTeX**:
-  - If you need `lualatex` (currently deferred), test:
-    ```bash
-    docker run --rm -v ~/dev/notes/notes-process:/app -it notes-process lualatex --version
-    ```
-  - If it fails, the Dockerfile includes `lualatex` support, so share the error.
-
 ## Maintenance
 
-- **Update LaTeX Packages**:
-  - If your markdown requires new LaTeX packages (e.g., for new formatting), add them to the `tlmgr install` line in the Dockerfile and rebuild.
-  - Example: `tlmgr install newpackage`.
+- **Update _quarto.yml**:
+  - Add new `.qmd` files to `chapters` in `_quarto.yml` as needed.
+  - Example: Add `output/New_Chapter.qmd` to the `chapters` list.
 
 - **Handle New Markdown Formats**:
-  - If Obsidian’s `markdown export` plugin changes frontmatter or image syntax, update `process_vault.py`’s `parse_frontmatter` or `fix_image_paths` functions.
-  - Share a sample `.md` file to adjust the script.
+  - If Obsidian’s export changes frontmatter or image syntax, update `fix_image_paths` or `parse_frontmatter` in `process-vault.py`.
+  - Share a sample `.md` file to adjust.
 
 - **Git Workflow**:
-  - Commit changes to `Dockerfile`, `process_vault.py`, `.vscode/`, or `run.sh`:
+  - Commit changes to `process-vault.py`, `_quarto.yml`, `.vscode/`, `Makefile`:
     ```bash
-    git add <file>
-    git commit -m "Update <description>"
-    git push origin main
+    git add scripts/process-vault.py _quarto.yml
+    git commit -m "Update process-vault.py to copy referenced images, add _quarto.yml"
+    git push origin master
     ```
-  - `input/` and `output/` are ignored (per `.gitignore`).
+  - `input/`, `output/`, `docs/` are ignored (per `.gitignore`).
 
 ## Notes
 
-- **Environment**: Built for macOS M2 (ARM64) with Docker Desktop, VS Code, and Git.
-- **Dependencies**: Managed via Docker (`python:3.13-slim-bookworm`, Quarto 1.5.57, TinyTeX) and `requirements.txt` (Python packages).
-- **Obsidian**: Assumes markdown files have frontmatter (`created`, `date`, `tags`) and images in `_resources/`.
-- **Quarto**: Configured for a book project with `scrbook` document class for PDF, `cosmo` theme for HTML, and EPUB output.
-- **Images**: Handled by copying `_resources/` and rewriting paths to `../_resources/`.
-- **PDF**: Uses `xelatex` for rendering, with pre-installed packages for speed.
-- **VS Code**: Use the **Run and Debug** panel, Tasks menu, or Source Control view for a streamlined workflow.
+- **Environment**: macOS M2 (ARM64) with Docker Desktop, VS Code, Git.
+- **Dependencies**: Docker (`python:3.13-slim-bookworm`, Quarto 1.5.57, TinyTeX), `requirements.txt` (Python packages).
+- **Obsidian**: Markdown files with frontmatter (`created`, `date`, `tags`), images in `input/_resources/`.
+- **Quarto**: Book project with `scrbook` for PDF, `cosmo` for HTML, EPUB output.
+- **Images**: Copied to `output/_resources/` by `process-vault.py`, referenced as `![](_resources/image.jpg)`, copied to `docs/_resources/` by Quarto.
+- **PDF**: Uses `xelatex` with pre-installed packages for speed.
+- **VS Code**: Use **Run and Debug**, Tasks, or Source Control view.
 - **Future Enhancements**:
-  - Chain tasks (e.g., `Process Notes` then `Render Quarto` in one configuration).
-  - Support subfolder-based sections in `_quarto.yml` (e.g., `Notes 2025Q1` as a chapter).
-  - Handle Obsidian-specific links (e.g., `[[links]]`).
+  - Dynamic `_quarto.yml` chapter generation.
+  - Subfolder-based sections (e.g., `Notes 2025Q1` as a chapter).
+  - Handle Obsidian `[[links]]`.
 
 For issues or enhancements, open a GitHub issue or share details (e.g., sample `.md` file, error logs) with your collaborator or AI assistant.

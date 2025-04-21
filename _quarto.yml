@@ -1,0 +1,25 @@
+project:
+  type: book
+  output-dir: docs
+  resources:
+    - input/_resources
+
+
+book:
+  author: Sprague
+  search: true
+  chapters:
+  - index.qmd
+  - output/Stowe and Conrad.qmd
+  - output/Notes-All.qmd
+  date: '2025-04-21'
+  title: Notes 2025
+format:
+  epub: {}
+  html:
+    theme: cosmo
+    css: css/middleman.css
+  pdf:
+    documentclass: scrbook
+
+

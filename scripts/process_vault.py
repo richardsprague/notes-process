@@ -7,7 +7,6 @@ from datetime import datetime
 from pathlib import Path
 from dateutil.parser import parse as parse_date
 import logging
-import subprocess
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -16,15 +15,16 @@ logger = logging.getLogger(__name__)
 # Paths (relative to /app in Docker)
 INPUT_DIR = Path("/app/input")
 OUTPUT_DIR = Path("/app/output")
-CHAPTERS_DIR = OUTPUT_DIR / "chapters"
 RESOURCES_DIR = INPUT_DIR / "_resources"
-OUTPUT_RESOURCES_DIR = OUTPUT_DIR / "docs" / "_resources"
+OUTPUT_RESOURCES_DIR = OUTPUT_DIR / "_resources"
 
 def parse_frontmatter(file_path):
-    """Parse frontmatter and content from a markdown file."""
+    """Parse frontmatter and content, sanitizing line terminators."""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
+            # Replace Unicode LS (U+2028) and PS (U+2029) with \n
+            content = content.replace('\u2028', '\n').replace('\u2029', '\n')
             if content.startswith("---"):
                 parts = content.split("---", 2)
                 if len(parts) >= 3:
@@ -50,38 +50,53 @@ def normalize_tags(frontmatter):
             del frontmatter["tags"]
     return frontmatter
 
-def fix_image_paths(content, is_index=False):
-    """Rewrite image paths to _resources/ for index.qmd or ../_resources/ for chapters."""
+def fix_image_paths(content, image_set, file_path):
+    """Rewrite image paths to _resources/, preserving captions and copying images."""
     def replace_image(match):
-        link_text = match.group(1)
-        image_path = match.group(2)
-        dir_path = "_resources" if is_index else "../_resources"
-        new_path = f"{dir_path}/{Path(image_path).name}"
-        logger.info(f"Rewriting image path: {image_path} -> {new_path}")
-        return f"{link_text}{new_path})"
+        caption = match.group(2)  # e.g., caption or empty string
+        image_path = match.group(3)  # e.g., image.jpg
+        if not image_path or not re.match(r'.+\.(jpg|jpeg|png|gif)$', image_path, re.IGNORECASE):
+            logger.warning(f"Skipping malformed image link in {file_path}: {match.group(0)}")
+            return match.group(0)
+        new_path = f"_resources/{Path(image_path).name}"
+        image_set.add(Path(image_path).name)
+        logger.info(f"Rewriting image path in {file_path}: {image_path} -> {new_path} with caption: '{caption}'")
+        return f"![{caption}]({new_path})"
 
-    # Match image links like ![text](_resources/image.jpg) or ![text](chapters/../../_resources/image.jpg)
-    pattern = r'(!\[.*?\]\()\s*(?:(?:chapters/)?\.\./)*_resources/([^)]+)\)?'
+    # Match image links like ![caption](_resources/image.jpg) or ![caption](.../_resources/image.jpg)
+    pattern = r'(!\[([^\]]*)\]\()\s*(?:\.\./)*_resources/([^/\s)]+\.(?:jpg|jpeg|png|gif))\)?'
     return re.sub(pattern, replace_image, content)
 
+def copy_referenced_images(image_set):
+    """Copy referenced images to output/_resources/."""
+    OUTPUT_RESOURCES_DIR.mkdir(exist_ok=True)
+    for image in image_set:
+        if not image:
+            logger.warning("Skipping empty image name in image_set")
+            continue
+        src = RESOURCES_DIR / image
+        dst = OUTPUT_RESOURCES_DIR / image
+        if src.is_file():
+            shutil.copy2(src, dst)
+            logger.info(f"Copied {src} to {dst}")
+        else:
+            logger.warning(f"Image not found or is a directory: {src}")
+
 def fix_internal_links(content, file_map):
-    """Convert Obsidian-style internal links to HTML links."""
+    """Convert Obsidian-style internal links to qmd links."""
     def replace_link(match):
         link_text = match.group(1)
         link_url = match.group(2)
-        # Decode URL-encoded spaces (%20)
         link_url_decoded = link_url.replace("%20", " ")
-        # Check if the linked file exists in file_map
-        for input_file, html_name in file_map.items():
+        for input_file, qmd_name in file_map.items():
             if Path(input_file).name == link_url_decoded:
-                logger.info(f"Resolved link: {link_url} -> {html_name}")
-                return f"[{link_text}]({html_name})"
-        # Log unresolved link and preserve as-is
+                logger.info(f"Resolved link: {link_url} -> {qmd_name}")
+                return f"[{link_text}]({qmd_name})"
         logger.warning(f"Unresolved link target in {content[:50]}...: {link_url}")
         return match.group(0)
 
-    # Match Markdown links like [text](filename.md)
-    return re.sub(r'\[([^\]]*)\]\(([^)]+\.md)\)', replace_link, content)
+    pattern = r'\[([^\]]*)\]\(([^)]+\.md)\)'
+    return re.sub(pattern, replace_link, content)
 
 def get_date(frontmatter, filename):
     """Extract date from frontmatter (date or created) or filename."""
@@ -90,11 +105,10 @@ def get_date(frontmatter, filename):
             try:
                 date_str = str(frontmatter[date_field])
                 parsed_date = parse_date(date_str, fuzzy=True).replace(tzinfo=None)
-                return parsed_date.replace(hour=0, minute=0, second=0, microsecond=0)  # Strip time
+                return parsed_date.replace(hour=0, minute=0, second=0, microsecond=0)
             except (ValueError, TypeError) as e:
                 logger.warning(f"Invalid {date_field} in frontmatter of {filename}: {e}")
 
-    # Fallback to filename (e.g., Notes YYMMDD)
     filename = Path(filename).stem
     match = re.match(r"Notes (\d{6})", filename)
     if match:
@@ -104,7 +118,7 @@ def get_date(frontmatter, filename):
             pass
     
     logger.warning(f"No valid date found for {filename}, using minimum date")
-    return datetime.min  # Sort undated files first
+    return datetime.min
 
 def format_notes_date(filename):
     """Format date for Notes files as date-box div."""
@@ -117,114 +131,67 @@ def format_notes_date(filename):
 
 def create_quarto_project(files):
     """Create Quarto project structure in output/."""
-    # Create output directories
     OUTPUT_DIR.mkdir(exist_ok=True)
-    CHAPTERS_DIR.mkdir(exist_ok=True)
-    OUTPUT_RESOURCES_DIR.parent.mkdir(exist_ok=True)  # Ensure docs/ exists
+    image_set = set()  # Track referenced images
 
-    # Separate Notes files (Notes YYMMDD* with tag: notes) and others
     notes_files = []
     other_files = []
+    file_map = {}  # {input_path: qmd_name}
     for f in files:
         frontmatter, _ = parse_frontmatter(f)
+        qmd_name = Path(f).relative_to(INPUT_DIR).with_suffix(".qmd").name
+        file_map[f] = qmd_name
         if (re.match(r"Notes \d{6}.*", Path(f).name) and
             frontmatter.get("tags") and ("notes" in frontmatter["tags"] or frontmatter["tags"] == "notes")):
             notes_files.append(f)
         else:
             other_files.append(f)
 
-    # Track file mappings for links
-    file_map = {}  # {input_path: html_name}
-    for f in files:
-        fname = Path(f).relative_to(INPUT_DIR).with_suffix(".html").name
-        file_map[f] = fname
-
-    # Process non-Notes files as individual chapters
-    chapters = []
     for file in other_files:
         frontmatter, body = parse_frontmatter(file)
         if not body:
             continue
         frontmatter = normalize_tags(frontmatter)
-        body = fix_image_paths(body, is_index=False)
+        body = fix_image_paths(body, image_set, file)
         body = fix_internal_links(body, file_map)
-        date = get_date(frontmatter, file)
         output_filename = Path(file).relative_to(INPUT_DIR).with_suffix(".qmd").name
-        output_file = CHAPTERS_DIR / output_filename
+        output_file = OUTPUT_DIR / output_filename
         with open(output_file, "w", encoding="utf-8") as f:
             if frontmatter:
                 f.write("---\n")
                 yaml.dump(frontmatter, f, allow_unicode=True)
                 f.write("---\n\n")
             f.write(body)
-        chapters.append((date, output_filename))
         logger.info(f"Processed {file} -> {output_file}")
 
-    # Concatenate Notes files into Notes-All.qmd
     if notes_files:
-        notes_files.sort(key=lambda x: get_date(parse_frontmatter(x)[0], x))  # Sort by date
+        notes_files.sort(key=lambda x: get_date(parse_frontmatter(x)[0], x))
         notes_content = []
         for file in notes_files:
             frontmatter, body = parse_frontmatter(file)
             if not body:
                 continue
-            body = fix_image_paths(body, is_index=False)  # Apply image path fix for chapters
+            body = fix_image_paths(body, image_set, file)
+            body = fix_internal_links(body, file_map)
             date_box = format_notes_date(file)
             notes_content.append(f"{date_box}\n{body}")
-        notes_all_file = CHAPTERS_DIR / "Notes-All.qmd"
+        notes_all_file = OUTPUT_DIR / "Notes-All.qmd"
         with open(notes_all_file, "w", encoding="utf-8") as f:
             f.write("# All Notes\n\n")
-            f.write(fix_internal_links("\n".join(notes_content), file_map))
-        chapters.append((datetime.min, "Notes-All.qmd"))  # Add at start
+            f.write("\n".join(notes_content))
         logger.info(f"Created {notes_all_file} with {len(notes_files)} notes")
 
-    # Sort chapters by date
-    chapters.sort()
-    chapter_files = [name for _, name in chapters]
+    copy_referenced_images(image_set)
 
-    # Create _quarto.yml
-    quarto_config = {
-        "project": {"type": "book", "output-dir": "docs"},
-        "book": {
-            "title": "Notes 2025",
-            "author": "Sprague",
-            "date": datetime.now().strftime("%Y-%m-%d"),
-            "chapters": ["index.qmd"] + [f"chapters/{f}" for f in chapter_files],
-        },
-        "format": {
-            "html": {"theme": "cosmo"},
-            "pdf": {"documentclass": "scrbook"},
-            "epub": {},
-        },
-    }
-    with open(OUTPUT_DIR / "_quarto.yml", "w", encoding="utf-8") as f:
-        yaml.dump(quarto_config, f, allow_unicode=True)
-
-    # Create index.qmd
     index_file = OUTPUT_DIR / "index.qmd"
     with open(index_file, "w", encoding="utf-8") as f:
         body = "# Welcome to Notes 2025\n\nThis is a collection of processed notes.\n"
-        body = fix_image_paths(body, is_index=True)  # Apply image path fix for index
+        body = fix_image_paths(body, image_set, index_file)
         f.write(body)
-
-    # Run Quarto render
-    logger.info("Running Quarto render...")
-    try:
-        subprocess.run(["quarto", "render", str(OUTPUT_DIR)], check=True)
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Quarto render failed: {e}")
-        return
-
-    # Copy _resources to output/docs/_resources after render
-    if RESOURCES_DIR.exists():
-        if OUTPUT_RESOURCES_DIR.exists():
-            shutil.rmtree(OUTPUT_RESOURCES_DIR)  # Clean any existing resources
-        shutil.copytree(RESOURCES_DIR, OUTPUT_RESOURCES_DIR)
-        logger.info(f"Copied {RESOURCES_DIR} to {OUTPUT_RESOURCES_DIR} after render")
+        logger.info(f"Created {index_file}")
 
 def main():
     """Process markdown files and create Quarto project."""
-    # Get all .md files strictly under input/ subdirectories
     files = [
         f for f in glob.glob(str(INPUT_DIR / "**/*.md"), recursive=True)
         if Path(f).is_file() and Path(f).parent.resolve() != Path("/app").resolve()
